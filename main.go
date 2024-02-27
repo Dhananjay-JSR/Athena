@@ -7,6 +7,7 @@ import (
 )
 
 func main() {
+
 	//	Step 1 :- Create a Intermediate Server That Initialize
 	//	Connection between Client and Actual Resource
 	//	Step 2 :- When any External Client Request to Server
@@ -26,6 +27,8 @@ func main() {
 	// Server Sets the Payload to Client 3400
 	// Client Response Back with that ID
 
+	//EXACT IMPLEMENTATIOn
+	//BROWSER -> SERVER -> CLIENT -> Actual Resource
 	isServer := true
 	if isServer {
 		con, err := net.Listen("tcp", "127.0.0.1:2002")
@@ -78,6 +81,9 @@ func main() {
 		//if err != nil {
 		//	fmt.Println(err)
 		//}
+		for {
+
+		}
 
 		//fmt.Printf("The Bytes Written Are %d", byteWritten)
 	} else {
