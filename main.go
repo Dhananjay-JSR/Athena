@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const secret_key = "Athena"
@@ -53,21 +54,98 @@ func main() {
 	flag.Parse()
 	fmt.Printf("Flag Parsed %s %s %s %s %s \n", *secretFlag, *connectType, *serverRange, *localhostRange, *serverUrl)
 	//fmt.Fprintf(flag.NewFlagSet(os.Args[0], flag.ExitOnError).Output(), "Usage of %s:\n", os.Args[0])
-
+	ToClientChan := make(chan string)
+	FromClientChan := make(chan string)
 	if *connectType == "client" || *connectType == "NULL" {
 		if *connectType == "NULL" {
 			logManager.Warn("No Type Selected Starting Application in Client Mode")
 		} else {
 			logManager.Info("Application Started in Client Mode")
 		}
+		var wg sync.WaitGroup
 		logManager.Info("Starting Start Client Mode")
-
-		_, dialErr := net.Dial("tcp", *serverUrl)
+		logManager.Info("Request from " + *localhostRange + " will be forwarded")
+		ServerConnection, dialErr := net.Dial("tcp", *serverUrl)
 		if dialErr != nil {
 			logManager.Error(dialErr.Error(), 23)
 		}
+		logManager.Info("Connection to Server Established")
+		wg.Add(2)
+		go func() {
+			//	 Handles Communication with Server and Client
+			defer wg.Done()
+			ReadBuffer := make([]byte, 1024)
+			_, WriteErr := ServerConnection.Write([]byte("ATHENA_CONNECTION_READY"))
+			if WriteErr != nil {
+				logManager.Error(WriteErr.Error(), 12)
+			}
+			readCount, readErr := ServerConnection.Read(ReadBuffer)
+			if readErr != nil {
+				logManager.Error(readErr.Error(), 1)
+			}
+			if (string(ReadBuffer[:readCount])) == "ATHENA_CONNECTION_ACCEPT" {
+				_, writeErr := ServerConnection.Write([]byte("ATHENA_CONNECTION_" + *localhostRange))
+				if writeErr != nil {
+					logManager.Error(writeErr.Error(), 1)
+				}
+				logManager.Info("Server Handshake Successful")
+				for {
+					readCount, readErr := ServerConnection.Read(ReadBuffer)
+					if readErr != nil {
+						logManager.Error(readErr.Error(), 1)
+					}
+					FromClientChan <- string(ReadBuffer[:readCount])
+					go func() {
+						for {
+							select {
+							case ResponseData := <-ToClientChan:
+								_, writeErr := ServerConnection.Write([]byte(ResponseData))
+								if writeErr != nil {
+									logManager.Error(writeErr.Error(), 1)
+								}
+								break
+								//	End Routine if Receive a Response
+							}
+						}
+					}()
+				}
+			} else {
+				logManager.Error("Received Unknown Handshake Request from Server , Exiting", 1)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			//	Handles Communication with Resource Behind Firewall
+			resourceConn, resourceConnErr := net.Dial("tcp", "127.0.0.1:"+*localhostRange)
+			if resourceConnErr != nil {
+				logManager.Error(resourceConnErr.Error(), 10)
+			}
+			logManager.Info("Connection to Resource Established :" + *localhostRange)
+			for {
+				select {
+				case ReceivingData := <-FromClientChan:
+					//	Write Data and wait for Response
+					readBuffer := make([]byte, 1024)
+					_, writeErr := resourceConn.Write([]byte(ReceivingData))
+					if writeErr != nil {
+						logManager.Error(writeErr.Error(), 1)
+					}
+					readCount, readErr := resourceConn.Read(readBuffer)
+					if readErr != nil {
+						logManager.Error(readErr.Error(), 1)
+					}
+					ToClientChan <- string(readBuffer[:readCount])
+				}
+			}
+
+		}()
+		wg.Wait()
+		logManager.Info("Process lifecycle Ended, Exiting Program")
 
 	} else {
+
+		var wg sync.WaitGroup
 		logManager.Info("Application Started in Server Mode")
 		portRange := strings.Split(*serverRange, "-")
 
@@ -89,18 +167,79 @@ func main() {
 				logManager.Error(listenerErr.Error(), 1)
 			}
 			logManager.Info("Server listening on Port " + strconv.Itoa(startRange))
-			_, acceptErr := listenerConn.Accept()
+			acceptConn, acceptErr := listenerConn.Accept() //Sync Mode
 			if acceptErr != nil {
 				logManager.Error(acceptErr.Error(), 1)
 			}
-			logManager.Info("Connection Accepted")
+			wg.Add(1)
 			go func() {
-				println("Hello World")
+				logManager.Info("New Client Connection Accepted")
+				readBuffer := make([]byte, 1024)
+				readCount, readErr := acceptConn.Read(readBuffer)
+				if readErr != nil {
+					logManager.Error(readErr.Error(), 1)
+				}
+				// The Server Received Request from Athena Client
+				if string(readBuffer[:readCount]) == "ATHENA_CONNECTION_READY" {
+					logManager.Info("ATHENA CLIENT CONNECTING")
+					_, writeErr := acceptConn.Write([]byte("ATHENA_CONNECTION_ACCEPT"))
+					if writeErr != nil {
+						logManager.Error(writeErr.Error(), 1)
+					}
+					readCount, readErr := acceptConn.Read(readBuffer)
+					if readErr != nil {
+						logManager.Error(readErr.Error(), 1)
+					}
+					portNumber := strings.Split(string(readBuffer[:readCount]), "ATHENA_CONNECTION_")
+					logManager.Info("Client-Server Handshake Complete :" + portNumber[1])
+					//	Allocate a Separate routine for client
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for {
+							select {
+							case IncomingData := <-ToClientChan:
+								_, writeErr := acceptConn.Write([]byte(IncomingData))
+								if writeErr != nil {
+									logManager.Error(writeErr.Error(), 1)
+								}
+								go func() {
+									readCount, readErr := acceptConn.Read(readBuffer)
+									if readErr != nil {
+										logManager.Error(readErr.Error(), 1)
+									}
+									FromClientChan <- string(readBuffer[:readCount])
+								}()
+							}
+						}
+					}()
+
+				} else {
+					fmt.Println("Receved External Client Req")
+					fmt.Println(string(readBuffer[:readCount]))
+					// Handle Connection from External Client
+					wg.Add(1)
+					go func() {
+						ToClientChan <- string(readBuffer[:readCount])
+						for {
+							select {
+							case receivedResponse := <-FromClientChan:
+								_, writtenErr := acceptConn.Write([]byte(receivedResponse))
+								if writtenErr != nil {
+									logManager.Error(writtenErr.Error(), 1)
+								}
+
+							}
+						}
+					}()
+				}
 			}()
 
+			wg.Wait()
 		} else {
-			logManager.Error("Couldnot parse range for server port Exiting", 44)
+			logManager.Error("Could not parse range for server port Exiting", 44)
 		}
+		logManager.Info("Server LifeCycle Ended , Exiting Program")
 
 	}
 
