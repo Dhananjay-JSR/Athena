@@ -1,6 +1,6 @@
 //go:build windows
 
-package logManager
+package internal
 
 import "syscall"
 

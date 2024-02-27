@@ -1,10 +1,16 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
-	"runtime"
-	"syscall"
+	"github.com/Dhananjay-JSR/Athena.git/internal"
+	"net"
+	"strconv"
+	"strings"
 )
+
+const secret_key = "Athena"
 
 func main() {
 
@@ -29,13 +35,75 @@ func main() {
 
 	//EXACT IMPLEMENTATION
 	//BROWSER -> SERVER -> CLIENT -> Actual Resource
-	if runtime.GOOS == "windows" {
-		//this enables ANSI Escape on Windows Console
-		logManager.EnableVirtualTerminalProcessing(syscall.Stdout, true)
+	internal.InitWindowsEscape()
+
+	// flags
+	//1) default secret string used for encryption
+	//2) type , server , ip , forwarder
+	//3) server-range
+	//4) localhost range
+	//5) help
+	// 6) server url -> url client will connect to
+
+	secretFlag := flag.String("secret", secret_key, "Secret key is used to provide an encryption layer over client server communication to prevent anyone from hijacking connection")
+	connectType := flag.String("type", "NULL", "defines the type application is started")
+	serverRange := flag.String("server-range", "2001", "defines port/s to setting up Middleware Server")
+	localhostRange := flag.String("local-range", "3000", "defines port/s to which connects are needs to be forwarded")
+	serverUrl := flag.String("url", "127.0.0.1:2001", "defines url to which client should connect to")
+	flag.Parse()
+	fmt.Printf("Flag Parsed %s %s %s %s %s \n", *secretFlag, *connectType, *serverRange, *localhostRange, *serverUrl)
+	//fmt.Fprintf(flag.NewFlagSet(os.Args[0], flag.ExitOnError).Output(), "Usage of %s:\n", os.Args[0])
+
+	if *connectType == "client" || *connectType == "NULL" {
+		if *connectType == "NULL" {
+			logManager.Warn("No Type Selected Starting Application in Client Mode")
+		} else {
+			logManager.Info("Application Started in Client Mode")
+		}
+		logManager.Info("Starting Start Client Mode")
+
+		_, dialErr := net.Dial("tcp", *serverUrl)
+		if dialErr != nil {
+			logManager.Error(dialErr.Error(), 23)
+		}
+
+	} else {
+		logManager.Info("Application Started in Server Mode")
+		portRange := strings.Split(*serverRange, "-")
+
+		startRange, connError := strconv.Atoi(portRange[0])
+		var endRange int
+		if len(portRange) == 2 {
+			endRange, connError = strconv.Atoi(portRange[1])
+		}
+		if connError != nil {
+			logManager.Error(connError.Error(), 23)
+		}
+
+		if len(portRange) == 2 {
+			fmt.Printf("%d %d \n", startRange, endRange)
+		} else if len(portRange) == 1 {
+
+			listenerConn, listenerErr := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(startRange))
+			if listenerErr != nil {
+				logManager.Error(listenerErr.Error(), 1)
+			}
+			logManager.Info("Server listening on Port " + strconv.Itoa(startRange))
+			_, acceptErr := listenerConn.Accept()
+			if acceptErr != nil {
+				logManager.Error(acceptErr.Error(), 1)
+			}
+			logManager.Info("Connection Accepted")
+			go func() {
+				println("Hello World")
+			}()
+
+		} else {
+			logManager.Error("Couldnot parse range for server port Exiting", 44)
+		}
+
 	}
-	logManager.Info("INFO MSG")
-	logManager.Warn("WARN MSG")
-	logManager.Error("ERROR MSG", 1)
+
 	//isServer := true
 	//if isServer {
 	//	con, err := net.Listen("tcp", "127.0.0.1:2002")
