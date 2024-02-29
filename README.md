@@ -1,6 +1,6 @@
 > [!IMPORTANT]
 >
-> The Project
+> The Project is still work in Progress
 
 ## Introducing Athena
 
