@@ -3,12 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
-	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
-	"github.com/Dhananjay-JSR/Athena.git/internal"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
+
+	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
+	"github.com/Dhananjay-JSR/Athena.git/internal"
 )
 
 const secret_key = "Athena"
@@ -20,8 +21,9 @@ func main() {
 	connectType := flag.String("type", "server", "defines the type application is started")
 	serverRange := flag.String("server-range", "2001", "defines port/s to setting up Middleware Server")
 	localhostRange := flag.String("local-range", "3000", "defines port/s to which connects are needs to be forwarded")
-	serverUrl := flag.String("url", "127.0.0.1:2001", "defines url to which client should connect to")
+	serverUrl := flag.String("url", "athena.dhananjaay.dev:2001", "defines url to which client should connect to")
 	flag.Parse()
+
 	fmt.Printf("Flag Parsed %s %s %s %s %s \n", *secretFlag, *connectType, *serverRange, *localhostRange, *serverUrl)
 	//fmt.Fprintf(flag.NewFlagSet(os.Args[0], flag.ExitOnError).Output(), "Usage of %s:\n", os.Args[0])
 	ToClientChan := make(chan string)
