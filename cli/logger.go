@@ -20,10 +20,14 @@ const (
 	_BOLD       = 1
 )
 
+func DEBUG(msg string) {
+	fmt.Printf("\u001B[%d;%d;%dmDEBUG \u001B[0m| %s \n", _FG_BLUE, _BG_WHITE, _BOLD, msg)
+
+}
+
 //ESCAPE  [
 
 func Info(msg string) {
-
 	fmt.Printf("\u001B[%d;%d;%dmINFO \u001B[0m| %s \n", _FG_GREEN, _BG_DEFAULT, _BOLD, msg)
 }
 

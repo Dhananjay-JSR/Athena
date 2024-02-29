@@ -15,7 +15,6 @@ func EnableVirtualTerminalProcessing(stream syscall.Handle, enable bool) error {
 	if err != nil {
 		return err
 	}
-
 	if enable {
 		mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING
 	} else {
