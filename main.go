@@ -3,18 +3,21 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/Dhananjay-JSR/Athena.git/internal/Server"
-	"github.com/Dhananjay-JSR/Athena.git/internal/client"
+	"io"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Dhananjay-JSR/Athena.git/internal/Server"
+	"github.com/Dhananjay-JSR/Athena.git/internal/client"
 
 	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
 	"github.com/Dhananjay-JSR/Athena.git/internal"
 )
 
 const secret_key = "Athena"
+const BUFFER_SIZE = 1024
 
 func main() {
 
@@ -28,8 +31,8 @@ func main() {
 
 	fmt.Printf("Flag Parsed %s %s %s %s %s \n", *secretFlag, *connectType, *serverRange, *localhostRange, *serverUrl)
 	//fmt.Fprintf(flag.NewFlagSet(os.Args[0], flag.ExitOnError).Output(), "Usage of %s:\n", os.Args[0])
-	ToClientChan := make(chan string)
-	FromClientChan := make(chan string)
+	ToClientChan := make(chan []byte)
+	FromClientChan := make(chan []byte)
 
 	if *connectType == "client" || *connectType == "NULL" {
 		if *connectType == "NULL" {
@@ -41,20 +44,22 @@ func main() {
 		logManager.Info("Initializing Server Handshake")
 
 		ServerConnection, dialErr := net.Dial("tcp", *serverUrl)
+		//Connecting to Server
 		if dialErr != nil {
 			logManager.Error(dialErr.Error(), 23)
 		}
 
 		wg.Add(2)
+		//Added Wait Group of 2
+		//Start Client Thread
 		go client.ClientHandler(&wg, ServerConnection, connectType, FromClientChan, ToClientChan)
-		go client.ResourceConnector(&wg, localhostRange, FromClientChan, ToClientChan)
+
 		wg.Wait()
 		logManager.Info("Client lifecycle Ended, Exiting Program")
 
 	} else {
 		logManager.Info("Application Started in Server Mode")
 		portRange := strings.Split(*serverRange, "-")
-
 		startRange, connError := strconv.Atoi(portRange[0])
 		var endRange int
 		if len(portRange) == 2 {
@@ -68,24 +73,62 @@ func main() {
 			fmt.Printf("%d %d \n", startRange, endRange)
 		} else if len(portRange) == 1 {
 
+			//listenerConn, listenErr := net.Listen("tcp", "127.0.0.1:2001")
+			//if listenErr != nil {
+			//	log.Fatal(listenErr)
+			//}
+			//
+			//defer listenerConn.Close()
+			//
+			//for {
+			//	acceptedCon, acceptedErr := listenerConn.Accept()
+			//	if acceptedErr != nil {
+			//		log.Println("Accept error:", acceptedErr)
+			//		continue
+			//	}
+			//
+			//	go func(conn net.Conn) {
+			//		defer conn.Close()
+			//
+			//		dialerConn, dialerErr := net.Dial("tcp", "127.0.0.1:3000")
+			//		if dialerErr != nil {
+			//			log.Println("Dialer error:", dialerErr)
+			//			return
+			//		}
+			//		defer dialerConn.Close()
+			//
+			//		go func() {
+			//			defer dialerConn.Close()
+			//			io.Copy(dialerConn, conn)
+			//		}()
+			//
+			//		io.Copy(conn, dialerConn)
+			//	}(acceptedCon)
+			//}
+
 			listenerConn, listenerErr := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(startRange))
 			logManager.DEBUG("Connected to PORT listening for Request")
 			if listenerErr != nil {
 				logManager.Error(listenerErr.Error(), 1)
 			}
 			logManager.Info("Server listening on Port " + strconv.Itoa(startRange))
-			readBuffer := make([]byte, 4076) // read and Store Buffer
 
 			for {
+				readBuffer := make([]byte, 4076) // read and Store Buffer
+
 				acceptConn, acceptErr := listenerConn.Accept() //Sync Mode
+
 				logManager.DEBUG("Connection Accepted")
 				if acceptErr != nil {
+
 					logManager.Error(acceptErr.Error(), 1)
 				}
 				readCount, readErr := acceptConn.Read(readBuffer)
 				logManager.DEBUG("Reading Request Successful")
 				if readErr != nil {
-					logManager.Error(readErr.Error(), 1)
+					if readErr == io.EOF {
+						logManager.DEBUG("CONNECTION CLOSEDDD !!!")
+					}
 				}
 				if string(readBuffer[:readCount]) == "ATHENA_CONNECTION_READY" {
 					logManager.Info("ATHENA CLIENT CONNECTING")
@@ -100,9 +143,10 @@ func main() {
 					portNumber := strings.Split(string(readBuffer[:readCount]), "ATHENA_CONNECTION_")
 					logManager.Info("Client-Server Handshake Complete :" + portNumber[1])
 					logManager.DEBUG("Athena Client Connection READY")
-					go Server.MasterClientSynchronizer(ToClientChan, FromClientChan, acceptConn, readBuffer)
+					go Server.MasterClientSynchronizer(ToClientChan, FromClientChan, &acceptConn)
 				} else {
-					logManager.Info("Connection Request")
+					fmt.Println("SERVER RECEUVED NEW CONNECTION REQUEST")
+					logManager.Info("NEW Connection Request")
 					go Server.ExternalConnectionHandler(&acceptConn, ToClientChan, readBuffer, readCount, FromClientChan)
 				}
 			}

@@ -1,60 +1,62 @@
 package Server
 
 import (
-	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
+	"fmt"
+	"log"
 	"net"
+
+	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
 )
 
-func MasterClientSynchronizer(ToClientChan chan string, FromClientChan chan string, acceptConn net.Conn, readBuffer []byte) {
-	defer acceptConn.Close()
-	for {
-		select {
-		case IncomingData := <-ToClientChan:
-			logManager.DEBUG("Sending Response to Athena Client")
-			_, writeErr := acceptConn.Write([]byte(IncomingData))
-			if writeErr != nil {
-				logManager.Error(writeErr.Error(), 1)
-			}
-			readCount, readErr := acceptConn.Read(readBuffer)
-			if readErr != nil {
-				logManager.Error(readErr.Error(), 1)
-			}
-			logManager.DEBUG("Received Response from ATHENA Client ")
-			FromClientChan <- string(readBuffer[:readCount])
-			logManager.DEBUG("Response Shared With Connection")
+const BUFFER_SIZE = 1024
 
+func MasterClientSynchronizer(ToClientChan chan []byte, FromClientChan chan []byte, acceptConn *net.Conn) {
+	//readBuffer := make([]byte, BUFFER_SIZE)
+	Allocator := make([]byte, BUFFER_SIZE*4)
+	defer (*acceptConn).Close()
+	for {
+		IncomingData := <-ToClientChan
+		logManager.DEBUG("Sending Response to Athena Client")
+
+		_, writeErr := (*acceptConn).Write(IncomingData)
+		if writeErr != nil {
+			logManager.Error(writeErr.Error(), 1)
 		}
+		// logManager.DEBUG("Written " + strconv.Itoa(writeCount) + " Number ")
+		//for readCount, readErr := (*acceptConn).Read(readBuffer); readCount != 0; {
+		//	if readErr != nil {
+		//		log.Println(readErr)
+		//		Allocator = append(Allocator, readBuffer[:readCount]...)
+		//	}
+		//}
+
+		readCount, readErr := (*acceptConn).Read(Allocator)
+		if readErr != nil {
+			log.Println(readErr)
+			//Allocator = append(Allocator, readBuffer[:readCount]...)
+		}
+		fmt.Println(readCount)
+		//FromClientChan <- Allocator[:readCount]
+		FromClientChan <- Allocator[:readCount]
+
 	}
 }
 
-func ExternalConnectionHandler(acceptConn *net.Conn, ToClientChan chan string, readBuffer []byte, readCount int, FromClientChan chan string) {
-	defer (*acceptConn).Close()
-	//Message Passing between 3rd party and client routine
+func ExternalConnectionHandler(acceptConn *net.Conn, ToClientChan chan []byte, readBuffer []byte, readCount int, FromClientChan chan []byte) {
+	defer (*acceptConn).Close() // Ensure connection is closed when function exits
 
-	ToClientChan <- string(readBuffer[:readCount])
-	readBufferLoc := make([]byte, 1024)
+	Allocator := make([]byte, readCount)
 
-	logManager.DEBUG("Data Passed to Client Manager " + string(readBuffer[:readCount]))
-connectionPoint:
+	copy(Allocator, readBuffer[:readCount])
 
-	for {
-		select {
-		case receivedResponse := <-FromClientChan:
-			logManager.DEBUG("Received Response from Client Manager")
-			_, _ = (*acceptConn).Write([]byte(receivedResponse))
-			readCountLoc, readErrLoc := (*acceptConn).Read(readBufferLoc)
-			if readErrLoc != nil {
-				if readErrLoc.Error() == "EOF" {
-					logManager.Info("CLIENT ENDED CONNECTION KILL GOROUTINE")
-					break connectionPoint
-				}
+	log.Println("Passing Data to Client Manager")
 
-				//logManager.Error(readErrLoc.Error(), 1)
-				//logManager.DEBUG(readErrLoc.Error())
-			}
-			ToClientChan <- string(readBufferLoc[:readCountLoc])
-		}
+	ToClientChan <- Allocator
 
+	response := <-FromClientChan
+	_, writeErr := (*acceptConn).Write(response)
+	if writeErr != nil {
+		log.Println("Error writing HTTP response:", writeErr)
 	}
 
 }
