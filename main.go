@@ -3,156 +3,225 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
+	"log"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/Dhananjay-JSR/Athena.git/internal/Server"
-	"github.com/Dhananjay-JSR/Athena.git/internal/client"
-
-	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
-	"github.com/Dhananjay-JSR/Athena.git/internal"
 )
-
-const secret_key = "Athena"
-const BUFFER_SIZE = 1024
 
 func main() {
 
-	internal.InitWindowsEscape()
-	secretFlag := flag.String("secret", secret_key, "Secret key is used to provide an encryption layer over client server communication to prevent anyone from hijacking connection")
 	connectType := flag.String("type", "server", "defines the type application is started")
-	serverRange := flag.String("server-range", "2001", "defines port/s to setting up Middleware Server")
-	localhostRange := flag.String("local-range", "27017", "defines port/s to which connects are needs to be forwarded")
-	serverUrl := flag.String("url", "127.0.0.1:2001", "defines url to which client should connect to")
 	flag.Parse()
-
-	fmt.Printf("Flag Parsed %s %s %s %s %s \n", *secretFlag, *connectType, *serverRange, *localhostRange, *serverUrl)
-	//fmt.Fprintf(flag.NewFlagSet(os.Args[0], flag.ExitOnError).Output(), "Usage of %s:\n", os.Args[0])
 	ToClientChan := make(chan []byte)
 	FromClientChan := make(chan []byte)
+	InterProcessChan := make(chan []byte)
 
 	if *connectType == "client" || *connectType == "NULL" {
-		if *connectType == "NULL" {
-			logManager.Warn("No Type Selected Starting Application in Client Mode")
-		} else {
-			logManager.Info("Application Started in Client Mode")
+
+		ConnectionedClient := make(map[string]chan []byte)
+
+		ServerDialer, ServerDialErr := net.Dial("tcp", "127.0.0.1:2001")
+		if ServerDialErr != nil {
+			log.Println(ServerDialErr)
 		}
+
 		var wg sync.WaitGroup
-		logManager.Info("Initializing Server Handshake")
 
-		ServerConnection, dialErr := net.Dial("tcp", *serverUrl)
-		//Connecting to Server
-		if dialErr != nil {
-			logManager.Error(dialErr.Error(), 23)
-		}
+		wg.Add(1)
 
-		wg.Add(2)
-		//Added Wait Group of 2
-		//Start Client Thread
-		go client.ClientHandler(&wg, ServerConnection, connectType, FromClientChan, ToClientChan)
-
-		wg.Wait()
-		logManager.Info("Client lifecycle Ended, Exiting Program")
-
-	} else {
-		logManager.Info("Application Started in Server Mode")
-		portRange := strings.Split(*serverRange, "-")
-		startRange, connError := strconv.Atoi(portRange[0])
-		var endRange int
-		if len(portRange) == 2 {
-			endRange, connError = strconv.Atoi(portRange[1])
-		}
-		if connError != nil {
-			logManager.Error(connError.Error(), 23)
-		}
-
-		if len(portRange) == 2 {
-			fmt.Printf("%d %d \n", startRange, endRange)
-		} else if len(portRange) == 1 {
-
-			//listenerConn, listenErr := net.Listen("tcp", "127.0.0.1:2001")
-			//if listenErr != nil {
-			//	log.Fatal(listenErr)
-			//}
-			//
-			//defer listenerConn.Close()
-			//
-			//for {
-			//	acceptedCon, acceptedErr := listenerConn.Accept()
-			//	if acceptedErr != nil {
-			//		log.Println("Accept error:", acceptedErr)
-			//		continue
-			//	}
-			//
-			//	go func(conn net.Conn) {
-			//		defer conn.Close()
-			//
-			//		dialerConn, dialerErr := net.Dial("tcp", "127.0.0.1:3000")
-			//		if dialerErr != nil {
-			//			log.Println("Dialer error:", dialerErr)
-			//			return
-			//		}
-			//		defer dialerConn.Close()
-			//
-			//		go func() {
-			//			defer dialerConn.Close()
-			//			io.Copy(dialerConn, conn)
-			//		}()
-			//
-			//		io.Copy(conn, dialerConn)
-			//	}(acceptedCon)
-			//}
-
-			listenerConn, listenerErr := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(startRange))
-			logManager.DEBUG("Connected to PORT listening for Request")
-			if listenerErr != nil {
-				logManager.Error(listenerErr.Error(), 1)
+		go func() {
+			for {
+				readBuffer := make([]byte, 4098)
+				readCount, ReadErr := ServerDialer.Read(readBuffer)
+				if ReadErr != nil {
+					log.Println(ReadErr)
+				}
+				InterProcessChan <- readBuffer[:readCount]
 			}
-			logManager.Info("Server listening on Port " + strconv.Itoa(startRange))
+		}()
+
+		go func() {
+			for {
+				RecvData := <-FromClientChan
+				ServerDialer.Write(RecvData)
+			}
+		}()
+
+		go func() {
 
 			for {
-				readBuffer := make([]byte, 4076) // read and Store Buffer
-
-				acceptConn, acceptErr := listenerConn.Accept() //Sync Mode
-
-				logManager.DEBUG("Connection Accepted")
-				if acceptErr != nil {
-
-					logManager.Error(acceptErr.Error(), 1)
-				}
-				readCount, readErr := acceptConn.Read(readBuffer)
-				logManager.DEBUG("Reading Request Successful")
-				if readErr != nil {
-					if readErr == io.EOF {
-						logManager.DEBUG("CONNECTION CLOSEDDD !!!")
-					}
-				}
-				if string(readBuffer[:readCount]) == "ATHENA_CONNECTION_READY" {
-					logManager.Info("ATHENA CLIENT CONNECTING")
-					_, writeErr := acceptConn.Write([]byte("ATHENA_CONNECTION_ACCEPT"))
-					if writeErr != nil {
-						logManager.Error(writeErr.Error(), 1)
-					}
-					readCount, readErr := acceptConn.Read(readBuffer)
-					if readErr != nil {
-						logManager.Error(readErr.Error(), 1)
-					}
-					portNumber := strings.Split(string(readBuffer[:readCount]), "ATHENA_CONNECTION_")
-					logManager.Info("Client-Server Handshake Complete :" + portNumber[1])
-					logManager.DEBUG("Athena Client Connection READY")
-					go Server.MasterClientSynchronizer(ToClientChan, FromClientChan, &acceptConn)
+				RecvData := <-InterProcessChan
+				identifier, Data := DecodeData(RecvData)
+				fmt.Println("Incoming Connection", (identifier), "With Data", string(Data))
+				val, ConExist := ConnectionedClient[identifier]
+				if ConExist {
+					fmt.Println("Identifier", identifier, "Exists")
+					val <- Data
 				} else {
-					fmt.Println("SERVER RECEUVED NEW CONNECTION REQUEST")
-					logManager.Info("NEW Connection Request")
-					go Server.ExternalConnectionHandler(&acceptConn, ToClientChan, readBuffer, readCount, FromClientChan)
+					fmt.Println("Identifier", identifier, "Does Not Exists")
+					fmt.Println("Creating New Connection")
+					dialerCon, dialerr := net.Dial("tcp", "127.0.0.1:27017")
+					AssignedChannel := make(chan []byte)
+					ConnectionedClient[identifier] = AssignedChannel
+					if dialerr != nil {
+						log.Println(dialerr)
+					}
+					go func(Identifier string, DialerCon net.Conn) {
+						for {
+							RecvData := <-AssignedChannel
+							_, WriteErr := DialerCon.Write(RecvData)
+							if WriteErr != nil {
+								log.Println(WriteErr)
+							}
+
+						}
+
+					}(identifier, dialerCon)
+
+					go func(Identifier string, DialerCon net.Conn) {
+						for {
+
+							readBuffer := make([]byte, 4098)
+							readCount, ReadErr := DialerCon.Read(readBuffer)
+							if ReadErr != nil {
+								log.Println(ReadErr)
+							}
+							FromClientChan <- EncodeData(Identifier, readBuffer[:readCount])
+						}
+					}(identifier, dialerCon)
+
+					// go func(Ientifier string) {
+					// 	for {
+					// 		RecvData := <-AssignedChannel
+					// 		_, WriteErr := dialerCon.Write(RecvData)
+					// 		if WriteErr != nil {
+					// 			log.Println(WriteErr)
+					// 		}
+					// 		readBuffer := make([]byte, 4098)
+					// 		readCount, ReadErr := dialerCon.Read(readBuffer)
+					// 		if ReadErr != nil {
+					// 			log.Println(ReadErr)
+					// 		}
+					// 		ToClientChan <- EncodeData(Ientifier, readBuffer[:readCount])
+
+					// 	}
+					// }(identifier)
+
 				}
 			}
-		} else {
-			logManager.Error("Could not parse range for server port Exiting", 44)
+		}()
+
+		wg.Wait()
+
+	} else {
+
+		// MY ISSUE
+		// Each Client Was Getting Resource From Same Connection
+		// There a Single FLow of Data , Not Continuous
+
+		// TODO: List\
+		// MAIN :- BIDUPLEX CONTINUE DATA
+		//  :- EACH CLIENT TO NEW SERVER CONNECTION
+		// 1 For Server Implementation
+		// 2 as Soon as Any Request Comes in , Generate a Hash from the Request
+		// and Send it a a GRoutine
+		// and in GRoutine , Send it to Server
+		//  like FORMAT {{{{HASH}}}}{Data} the Hash is used to identify the client connected to Server
+		//  on Client Side , the Hash is used to identify the client connected to Server
+		//  After the Hash is Identified , the Data is sent to the Client
+		BindCon, BindErr := net.Listen("tcp", "127.0.0.1:2001")
+		if BindErr != nil {
+			log.Println(BindErr)
 		}
-		logManager.Info("Server LifeCycle Ended , Exiting Program")
+		// var AthenaConnection net.Conn
+		isAthenaConneted := false
+		for {
+			if !isAthenaConneted {
+				fmt.Println("Waiting for Athena")
+			} else {
+				fmt.Println("Waiting for Someone")
+			}
+			AcceptCon, AcceptErr := BindCon.Accept()
+			if AcceptErr != nil {
+
+				log.Println(AcceptErr)
+			}
+			if !isAthenaConneted {
+				go func(AthenaCon net.Conn) {
+					for {
+						RecvData := <-ToClientChan
+						_, WriteErr := AthenaCon.Write(RecvData)
+						if WriteErr != nil {
+							log.Println(WriteErr)
+						}
+
+					}
+				}(AcceptCon)
+
+				go func(AthenaCon net.Conn) {
+					for {
+						readBuffer := make([]byte, 4098)
+						readCount, ReadErr := AcceptCon.Read(readBuffer)
+						if ReadErr != nil {
+							log.Println(ReadErr)
+						}
+						FromClientChan <- readBuffer[:readCount]
+					}
+				}(AcceptCon)
+				isAthenaConneted = true
+				fmt.Println("Athena Connected")
+			} else {
+
+				fmt.Println("Someon Connected")
+
+				ConnIdentifier := AcceptCon.RemoteAddr().String()
+
+				go func(ConnectingClient net.Conn, Itenifier string) {
+					for {
+						RecvResponse := <-FromClientChan
+						identifier, Data := DecodeData(RecvResponse)
+						if identifier == Itenifier {
+							fmt.Println("Sending Data back to Client", (identifier), "With Data", string(Data))
+							_, WriteErr := ConnectingClient.Write(Data)
+							if WriteErr != nil {
+								log.Println(WriteErr)
+							}
+
+						}
+
+					}
+				}(AcceptCon, ConnIdentifier)
+
+				go func(ConnectingClient net.Conn, Itenifier string) {
+					for {
+						ReadBuffer := make([]byte, 4098)
+						ReadCount, ReadErr := ConnectingClient.Read(ReadBuffer)
+						if ReadErr != nil {
+							log.Println(ReadErr)
+						}
+						fmt.Println("Incoming Connection", Itenifier, "With Data", string(ReadBuffer[:ReadCount]))
+						ToClientChan <- EncodeData(Itenifier, ReadBuffer[:ReadCount])
+					}
+
+				}(AcceptCon, ConnIdentifier)
+			}
+		}
 	}
+}
+
+const DELIMITER = "|||||"
+
+func EncodeData(UniqueIdentifier string, Data []byte) []byte {
+	// Encode the Data with the UniqueIdentifier
+	// Return the Encoded Data
+	return append([]byte(UniqueIdentifier+DELIMITER), Data...)
+}
+
+func DecodeData(Data []byte) (string, []byte) {
+
+	// Decode the Data
+	// Return the UniqueIdentifier and the Data
+	Identifier := string(Data[:strings.Index(string(Data), DELIMITER)])
+	return Identifier, Data[strings.Index(string(Data), DELIMITER)+5:]
 }

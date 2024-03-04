@@ -1,62 +1,64 @@
 package Server
 
 import (
-	"fmt"
 	"log"
 	"net"
-
-	logManager "github.com/Dhananjay-JSR/Athena.git/cli"
 )
 
 const BUFFER_SIZE = 1024
 
-func MasterClientSynchronizer(ToClientChan chan []byte, FromClientChan chan []byte, acceptConn *net.Conn) {
+func MasterClientSynchronizer(ToClientChan chan []byte, FromClientChan chan []byte, AthenaClient *net.Conn) {
 	//readBuffer := make([]byte, BUFFER_SIZE)
-	Allocator := make([]byte, BUFFER_SIZE*4)
-	defer (*acceptConn).Close()
-	for {
-		IncomingData := <-ToClientChan
-		logManager.DEBUG("Sending Response to Athena Client")
 
-		_, writeErr := (*acceptConn).Write(IncomingData)
-		if writeErr != nil {
-			logManager.Error(writeErr.Error(), 1)
+	defer (*AthenaClient).Close()
+	// Read from the Channel
+	// Write to the connection
+	go func(AthenaClient *net.Conn) {
+		//
+		for {
+			RecvData := <-ToClientChan
+			(*AthenaClient).Write(RecvData)
 		}
-		// logManager.DEBUG("Written " + strconv.Itoa(writeCount) + " Number ")
-		//for readCount, readErr := (*acceptConn).Read(readBuffer); readCount != 0; {
-		//	if readErr != nil {
-		//		log.Println(readErr)
-		//		Allocator = append(Allocator, readBuffer[:readCount]...)
-		//	}
-		//}
+	}(AthenaClient)
+	// Read from the connection
+	// Write to the Channel
+	go func(AthenaClient *net.Conn) {
 
-		readCount, readErr := (*acceptConn).Read(Allocator)
-		if readErr != nil {
-			log.Println(readErr)
-			//Allocator = append(Allocator, readBuffer[:readCount]...)
+		for {
+			readBuffer := make([]byte, BUFFER_SIZE)
+			readCount, readErr := (*AthenaClient).Read(readBuffer)
+			if readErr != nil {
+				if readErr == nil {
+					return
+				}
+			}
+			FromClientChan <- readBuffer[:readCount]
 		}
-		fmt.Println(readCount)
-		//FromClientChan <- Allocator[:readCount]
-		FromClientChan <- Allocator[:readCount]
-
-	}
+	}(AthenaClient)
 }
 
-func ExternalConnectionHandler(acceptConn *net.Conn, ToClientChan chan []byte, readBuffer []byte, readCount int, FromClientChan chan []byte) {
-	defer (*acceptConn).Close() // Ensure connection is closed when function exits
+func ExternalConnectionHandler(AcceptedConnection *net.Conn, ToClientChan chan []byte, readBuffer []byte, readCount int, FromClientChan chan []byte) {
+	defer (*AcceptedConnection).Close() // Ensure connection is closed when function exits
+	// Read from the connection
+	// Write to the Channel
+	go func(AcceptedConnection *net.Conn) {
+		for {
+			readCount, readErr := (*AcceptedConnection).Read(readBuffer)
+			if readErr != nil {
+				log.Println(readErr)
+			}
+			ToClientChan <- readBuffer[:readCount]
+		}
 
-	Allocator := make([]byte, readCount)
+	}(AcceptedConnection)
 
-	copy(Allocator, readBuffer[:readCount])
-
-	log.Println("Passing Data to Client Manager")
-
-	ToClientChan <- Allocator
-
-	response := <-FromClientChan
-	_, writeErr := (*acceptConn).Write(response)
-	if writeErr != nil {
-		log.Println("Error writing HTTP response:", writeErr)
-	}
+	// Read from the Channel
+	// Write to the connection
+	go func(AcceptedConnection *net.Conn) {
+		for {
+			RecvData := <-FromClientChan
+			(*AcceptedConnection).Write(RecvData)
+		}
+	}(AcceptedConnection)
 
 }
