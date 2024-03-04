@@ -37,6 +37,7 @@ func main() {
 				if ReadErr != nil {
 					log.Println(ReadErr)
 				}
+				fmt.Println("Data Received from Middle Server")
 				InterProcessChan <- readBuffer[:readCount]
 			}
 		}()
@@ -44,7 +45,11 @@ func main() {
 		go func() {
 			for {
 				RecvData := <-FromClientChan
-				ServerDialer.Write(RecvData)
+				write, err := ServerDialer.Write(RecvData)
+				if err != nil {
+					return
+				}
+				fmt.Println("-- Data Sent to Middle Server -- \n", string(RecvData), "With Write Count", write)
 			}
 		}()
 
@@ -53,60 +58,47 @@ func main() {
 			for {
 				RecvData := <-InterProcessChan
 				identifier, Data := DecodeData(RecvData)
-				fmt.Println("Incoming Connection", (identifier), "With Data", string(Data))
-				val, ConExist := ConnectionedClient[identifier]
+				//fmt.Println("Incoming Connection", identifier, "With Data", string(Data))
+				AssignedChann, ConExist := ConnectionedClient[identifier]
 				if ConExist {
 					fmt.Println("Identifier", identifier, "Exists")
-					val <- Data
+					AssignedChann <- Data
 				} else {
-					fmt.Println("Identifier", identifier, "Does Not Exists")
-					fmt.Println("Creating New Connection")
+					fmt.Println("-- Connection Identiefier ", identifier, "Does Not Exists Before")
+					//fmt.Println("Creating New Connection")
 					dialerCon, dialerr := net.Dial("tcp", "127.0.0.1:27017")
-					AssignedChannel := make(chan []byte)
-					ConnectionedClient[identifier] = AssignedChannel
-					if dialerr != nil {
-						log.Println(dialerr)
-					}
-					go func(Identifier string, DialerCon net.Conn) {
+					AllocateChan := make(chan []byte)
+					ConnectionedClient[identifier] = AllocateChan
+					println("Sending Data to Channel Allocated to ", identifier)
+					go func(Identifier string, DialerCon net.Conn, AllocatedChannel chan []byte) {
 						for {
-							RecvData := <-AssignedChannel
+							RecvData := <-AllocatedChannel
+							fmt.Println("-- Received Data from Channel Allocated to ", Identifier, " --- Data Content -- \n", string(RecvData))
+							fmt.Println("Writing Data to Actual Server", Identifier)
 							_, WriteErr := DialerCon.Write(RecvData)
 							if WriteErr != nil {
 								log.Println(WriteErr)
 							}
-
 						}
+					}(identifier, dialerCon, AllocateChan)
 
-					}(identifier, dialerCon)
-
-					go func(Identifier string, DialerCon net.Conn) {
+					go func(Identifier string, DialerCon net.Conn, FromClientChan chan []byte) {
 						for {
-
 							readBuffer := make([]byte, 4098)
 							readCount, ReadErr := DialerCon.Read(readBuffer)
 							if ReadErr != nil {
 								log.Println(ReadErr)
 							}
+							fmt.Println("-- Received Data from Actual Server ", Identifier, " --- Data Content -- \n", string(readBuffer[:readCount]))
 							FromClientChan <- EncodeData(Identifier, readBuffer[:readCount])
 						}
-					}(identifier, dialerCon)
+					}(identifier, dialerCon, FromClientChan)
+					//FUCKK !! Go Routine Blocks untill There is Something to Read
+					AllocateChan <- Data
 
-					// go func(Ientifier string) {
-					// 	for {
-					// 		RecvData := <-AssignedChannel
-					// 		_, WriteErr := dialerCon.Write(RecvData)
-					// 		if WriteErr != nil {
-					// 			log.Println(WriteErr)
-					// 		}
-					// 		readBuffer := make([]byte, 4098)
-					// 		readCount, ReadErr := dialerCon.Read(readBuffer)
-					// 		if ReadErr != nil {
-					// 			log.Println(ReadErr)
-					// 		}
-					// 		ToClientChan <- EncodeData(Ientifier, readBuffer[:readCount])
-
-					// 	}
-					// }(identifier)
+					if dialerr != nil {
+						log.Println(dialerr)
+					}
 
 				}
 			}
@@ -137,6 +129,7 @@ func main() {
 		// var AthenaConnection net.Conn
 		isAthenaConneted := false
 		for {
+
 			if !isAthenaConneted {
 				fmt.Println("Waiting for Athena")
 			} else {
@@ -151,7 +144,9 @@ func main() {
 				go func(AthenaCon net.Conn) {
 					for {
 						RecvData := <-ToClientChan
+						//println("Data Sent to Athena")
 						_, WriteErr := AthenaCon.Write(RecvData)
+						//fmt.Println("Data Sent To Athena ", string(RecvData))
 						if WriteErr != nil {
 							log.Println(WriteErr)
 						}
@@ -163,6 +158,7 @@ func main() {
 					for {
 						readBuffer := make([]byte, 4098)
 						readCount, ReadErr := AcceptCon.Read(readBuffer)
+						//fmt.Println("Data Received from Athena ", string(readBuffer[:readCount]))
 						if ReadErr != nil {
 							log.Println(ReadErr)
 						}
@@ -182,12 +178,11 @@ func main() {
 						RecvResponse := <-FromClientChan
 						identifier, Data := DecodeData(RecvResponse)
 						if identifier == Itenifier {
-							fmt.Println("Sending Data back to Client", (identifier), "With Data", string(Data))
+							fmt.Println("-- Sending Data back to Connected Client ID \n", (identifier), "With Data Content -- \n", string(Data))
 							_, WriteErr := ConnectingClient.Write(Data)
 							if WriteErr != nil {
 								log.Println(WriteErr)
 							}
-
 						}
 
 					}
@@ -200,7 +195,7 @@ func main() {
 						if ReadErr != nil {
 							log.Println(ReadErr)
 						}
-						fmt.Println("Incoming Connection", Itenifier, "With Data", string(ReadBuffer[:ReadCount]))
+						fmt.Println("-- Received This Data Coming From Connected Client ID \n", Itenifier, " With Data Content -- \n", string(ReadBuffer[:ReadCount]))
 						ToClientChan <- EncodeData(Itenifier, ReadBuffer[:ReadCount])
 					}
 
@@ -208,6 +203,48 @@ func main() {
 			}
 		}
 	}
+}
+
+func asasa() {
+	listenner, listenErr := net.Listen("tcp", "127.0.0.1:2001")
+	if listenErr != nil {
+		return
+
+	}
+	for {
+		acceptedCon, acceperr := listenner.Accept()
+		if acceperr != nil {
+			return
+
+		}
+
+		go func(acceptedCon net.Conn) {
+			fmt.Println("New Connection Accepted ", acceptedCon.RemoteAddr())
+
+			dialer, dialerrr := net.Dial("tcp", "127.0.0.1:27017")
+			if dialerrr != nil {
+				return
+			}
+
+			readByte := make([]byte, 4098)
+			readCount, _ := acceptedCon.Read(readByte)
+
+			fmt.Println(acceptedCon.RemoteAddr(), " Data Received from Client \n", string(readByte[:readCount]))
+			dialer.Write(readByte[:readCount])
+			readCount, _ = dialer.Read(readByte)
+			fmt.Println(acceptedCon.RemoteAddr(), " Data Received from Server \n", string(readByte[:readCount]))
+			acceptedCon.Write(readByte[:readCount])
+			readCount, _ = acceptedCon.Read(readByte)
+			fmt.Println(acceptedCon.RemoteAddr(), " Data Received from Client \n", string(readByte[:readCount]))
+			dialer.Write(readByte[:readCount])
+			readCount, _ = dialer.Read(readByte)
+			fmt.Println(acceptedCon.RemoteAddr(), " Data Received from Server \n", string(readByte[:readCount]))
+			acceptedCon.Write(readByte[:readCount])
+
+		}(acceptedCon)
+
+	}
+
 }
 
 const DELIMITER = "|||||"
